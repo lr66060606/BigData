@@ -1,0 +1,194 @@
+---
+title: "Big Data Analytics Week 2 Lab: Introduction to R"
+author: Dom Richards
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    toc_float: true
+    theme: default
+    highlight: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+This lab session will cover the basics of R. There are no questions - just examples.
+
+# Basic Commands
+
+Here are some basic R commands:
+
+```{r basic-arithmetic}
+# Basic arithmetic
+2 + 3
+5 * 7
+10 / 3
+2^4
+
+# Assignment operator
+x <- 5
+y <- 10
+x + y
+
+# Check what's in your environment
+ls()
+```
+
+## Assignment Operators: `<-` vs `=`
+
+R has two main assignment operators:
+
+```{r assignment-operators}
+# Left assignment with <-
+a <- 10
+b <- 20
+
+# Assignment with =
+c <- 30
+d <- 40
+
+# Both work for basic assignment
+print(a)
+print(c)
+```
+
+## What they do
+
+**`<-`** assignment operator (puts a value into a name).
+
+**`=`** either assignment or used to match function arguments by name.
+
+## Best practice (what most style guides recommend)
+
+- Use `<-` for assignment.
+- Use `=` only for function arguments.
+
+## Why this convention?
+
+- **Clearer code**: `=` in calls, `<-` elsewhere.
+- **Matches common R community style** (Tidyverse, Google).
+
+# Working with Vectors
+
+## Creating Vectors
+
+```{r vectors-creation}
+# Numeric vectors
+numbers <- c(1, 2, 3, 4, 5)
+scores <- c(85, 92, 78, 96, 88)
+
+# Character vectors
+names <- c("Alice", "Bob", "Charlie", "Diana")
+colours <- c("red", "green", "blue")
+
+# Logical vectors
+passed <- c(TRUE, TRUE, FALSE, TRUE, TRUE)
+
+# Sequences
+seq1 <- 1:10
+seq2 <- seq(from = 0, to = 100, by = 10)
+rep1 <- rep(c("A", "B"), times = 5)
+
+# Display some examples
+print(numbers)
+print(seq1)
+print(rep1)
+```
+
+## Vector Operations
+
+```{r vector-operations}
+# Accessing elements
+numbers[1]
+numbers[c(1, 3, 5)]
+numbers[-1]
+
+# Vector arithmetic
+a <- c(1, 2, 3)
+b <- c(4, 5, 6)
+a + b
+a * b
+a^2
+
+# Summary statistics
+mean(scores)
+median(scores)
+sd(scores)
+min(scores)
+max(scores)
+summary(scores)
+```
+
+# Matrices and Arrays
+
+## Creating Matrices
+
+```{r matrices-creation}
+# Create a matrix
+mat1 <- matrix(1:12, nrow = 3, ncol = 4)
+mat1
+
+# Create matrix by binding vectors
+vec1 <- c(1, 2, 3)
+vec2 <- c(4, 5, 6)
+mat2 <- rbind(vec1, vec2)
+mat3 <- cbind(vec1, vec2)
+
+print("Row bind result:")
+mat2
+print("Column bind result:")
+mat3
+
+# Matrix with row and column names
+sales <- matrix(c(100, 120, 90, 110, 95, 130),
+    nrow = 2, ncol = 3,
+    dimnames = list(
+        c("Q1", "Q2"),
+        c("Product A", "Product B", "Product C")
+    )
+)
+sales
+```
+
+## Matrix Operations
+
+```{r matrix-operations}
+# Accessing matrix elements
+sales[1, 2] # Row 1, Column 2
+sales[1, ] # Entire first row
+sales[, "Product A"] # Entire first column
+
+# Matrix arithmetic
+sales * 2 # Scalar multiplication
+rowSums(sales) # Sum each row
+colSums(sales) # Sum each column
+apply(sales, 1, mean) # Row means
+apply(sales, 2, mean) # Column means
+```
+
+# Data Frames
+
+## Creating Data Frames
+
+```{r dataframes-creation}
+# Create a data frame
+students <- data.frame(
+    name = c("Alice", "Bob", "Charlie", "Diana", "Eve"),
+    age = c(20, 22, 21, 23, 20),
+    grade = c("A", "B+", "A-", "A", "B"),
+    passed = c(TRUE, TRUE, TRUE, TRUE, TRUE),
+    stringsAsFactors = FALSE
+)
+
+# View the data frame
+students
+str(students) # Structure
+summary(students) # Summary
+head(students,2) # First few rows
+tail(students,2) # Last few rows
+```
+

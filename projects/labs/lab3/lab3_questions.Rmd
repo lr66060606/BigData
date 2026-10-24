@@ -1,0 +1,370 @@
+---
+title: "Big Data Analytics Week 4 Lab: Spark Apply"
+author: "Dom Richards"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    toc_float: true
+    theme: default
+    highlight: default
+---
+
+# Overview
+
+In this lab you'll use sparklyr `spark_apply()` to run native R linear models (`lm()`) inside Spark on the mtcars dataset.  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
+```
+
+# Setup and Data Loading
+
+## Install and Load Packages
+
+First, we need to load the necessary R packages for working with Spark and analyzing our data:
+
+- **sparklyr**: Interface for Apache Spark from R
+- **dplyr**: Data manipulation with familiar R syntax
+- **ggplot2**: Creating visualizations
+- **broom**: Tidying statistical model outputs
+- **knitr**: For rendering tables in R Markdown
+
+The code below checks if each package is installed and installs it if needed, then loads all packages.
+
+```{r load-packages}
+if (!requireNamespace("sparklyr", quietly = TRUE)) install.packages("sparklyr")
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+if (!requireNamespace("broom", quietly = TRUE)) install.packages("broom")
+if (!requireNamespace("knitr", quietly = TRUE)) install.packages("knitr")
+
+library(sparklyr)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(knitr)
+```
+
+## Connect to Spark 4.0.1
+
+Next, we establish a connection to a local Spark cluster. The connection runs Spark in "local mode," which means it uses all available cores on your machine (`local[*]`).
+
+**Configuration notes:**
+
+- `sparklyr.arrow = TRUE` enables Apache Arrow (if installed - optional) for faster data transfer between R and Spark
+- `master = "local[*]"` tells Spark to run locally using all available CPU cores
+- `version = "4.0.1"` specifies which version of Spark to use
+
+```{r connect-spark}
+cfg <- spark_config()
+cfg$sparklyr.arrow <- TRUE
+cfg$sparklyr.connect.enableHive <- FALSE
+sc <- spark_connect(master = "local[*]", config = cfg, version = "4.0.1")
+```
+
+## Copy and Repartition `mtcars`
+
+Now we'll copy the built-in `mtcars` dataset to Spark:
+
+```{r load-mtcars}
+mtcars_tbl <- copy_to(sc, mtcars, "mtcars", overwrite = TRUE)
+
+mtcars_tbl %>%
+    head() %>%
+    kable()
+```
+
+# Part 1 — Grouped `lm()` via `spark_apply()`
+
+In this section, we'll fit separate linear regression models for each cylinder group (4, 6, and 8 cylinders). The model we're fitting is:
+
+$$\text{mpg} = \beta_0 + \beta_1 \times \text{wt} + \epsilon$$
+
+This allows us to investigate whether the relationship between weight and fuel efficiency differs across engine types.
+
+## Why use `spark_apply()` for this?
+
+While we could fit these models in regular R, using `spark_apply()` demonstrates how to:
+
+1. Partition data by a grouping variable (`cyl`)
+2. Apply a custom R function to each partition independently
+3. Collect the results back into a single data frame
+
+This pattern scales to much larger datasets where groups are distributed across multiple machines.
+
+## Understanding the Code
+
+The function passed to `spark_apply()` does the following for each cylinder group:
+
+- Fits a linear model using `lm(mpg ~ wt, data = df)`
+- Extracts coefficients and statistics using `broom::tidy()` and `broom::glance()`
+- Returns a data frame with model diagnostics
+
+The `columns` argument specifies the **schema** (column names and types) that Spark should expect in the returned data.
+
+```{r fit-by-group}
+by_cyl_models <- mtcars_tbl %>%
+    spark_apply(
+        function(df) {
+            library(broom)
+            m <- lm(mpg ~ wt, data = df)
+            coef_df <- tidy(m)
+            model_stats <- glance(m)
+            data.frame(
+                # cyl = as.numeric(unique(df$cyl)[1]),
+                n = as.numeric(nrow(df)),
+                intercept = as.numeric(coef_df$estimate[1]),
+                intercept_pval = as.numeric(coef_df$p.value[1]),
+                wt_coef = as.numeric(coef_df$estimate[2]),
+                wt_coef_pval = as.numeric(coef_df$p.value[2]),
+                r_squared = as.numeric(model_stats$r.squared),
+                adj_r_squared = as.numeric(model_stats$adj.r.squared),
+                sigma = as.numeric(model_stats$sigma)
+            )
+        },
+        group_by = "cyl",
+        columns = list(
+            cyl = "double",
+            n = "double",
+            intercept = "double",
+            intercept_pval = "double",
+            wt_coef = "double",
+            wt_coef_pval = "double",
+            r_squared = "double",
+            adj_r_squared = "double",
+            sigma = "double"
+        )
+    )
+
+models_df <- by_cyl_models %>%
+    arrange(cyl) %>%
+    collect()
+
+# Display with better formatting
+models_df %>%
+    knitr::kable(digits = 3)
+```
+
+**Interpretation:**  
+
+Each cylinder group is modeled separately. Key observations:
+
+- **`wt_coef`** (the slope): Should be negative for all groups, indicating that heavier cars have lower fuel efficiency
+- **`r_squared`**: Measures how much of the variation in MPG is explained by weight. Higher values indicate better model fit
+- **`intercept_pval` and `wt_coef_pval`**: P-values testing whether each coefficient is significantly different from zero. (Less than 0.1 is considered significant)
+
+Compare the results across cylinder groups. Do 4-cylinder, 6-cylinder, and 8-cylinder cars show different relationships between weight and fuel efficiency?
+
+---
+
+
+
+# Part 2 — Visualize Grouped Fits
+
+In this section, we'll create a plot showing:
+
+- **Raw data points**: The actual observed (weight, MPG) pairs, colored by cylinder count
+- **Regression lines**: The fitted linear models for each cylinder group
+- **Group-specific trends**: How the weight-MPG relationship differs across engine types
+
+## Building the Visualization
+
+The code below:
+
+1. Collects the raw data from Spark back into R
+3. Creates group-specific regression lines using the model coefficients from Part 1
+4. Plots everything using **ggplot2**
+
+```{r plot, fig.width=7, fig.height=4.5}
+raw_df <- mtcars_tbl %>% collect()
+raw_df$cyl <- factor(raw_df$cyl)
+
+# Helper function to generate weight sequence for a given cylinder group
+# Args:
+#   cyl_value: The cylinder group value (4, 6, or 8) to generate sequence for
+#   df: The dataframe containing weight (wt) and cylinder (cyl) data
+#   n_points: Number of evenly-spaced points to generate (default: 100)
+# Returns:
+#   A numeric vector of weight values spanning the min to max for this cylinder group
+get_wt_sequence <- function(cyl_value, df, n_points = 100) {
+    seq(min(df$wt[df$cyl == cyl_value]),    # Start: minimum weight for this cylinder group
+        max(df$wt[df$cyl == cyl_value]),    # End: maximum weight for this cylinder group
+        length.out = n_points               # Generate n_points evenly-spaced values
+    )
+}
+
+# Create regression lines from models_df
+# For each cylinder group, we generate predicted MPG values across the weight range
+# This allows us to draw smooth regression lines for visualization
+regression_lines <- models_df %>%
+    rowwise() %>%
+    do({
+        # Create a sequence of 100 weight values spanning the range for this cylinder group
+        wt_seq <- get_wt_sequence(.$cyl, raw_df)
+        # For each weight value, calculate predicted MPG using the fitted coefficients:
+        # mpg_pred = intercept + wt_coef * wt
+        data.frame(
+            cyl = .$cyl,
+            wt = wt_seq,
+            mpg_pred = .$intercept + .$wt_coef * wt_seq
+        )
+    }) %>%
+    ungroup()
+
+regression_lines %>% head() %>% kable()
+```
+
+```{r plot-linear-2, fig.width=7, fig.height=4.5}
+ggplot() +
+    geom_point(
+        data = raw_df,
+        aes(x = wt, y = mpg, color = factor(cyl)),
+        alpha = 0.7, size = 2.5
+    ) +
+    geom_line(
+        data = regression_lines,
+        aes(x = wt, y = mpg_pred, color = factor(cyl)),
+        linewidth = 1.2
+    ) +
+    scale_color_brewer(palette = "Set1", name = "Cylinders") +
+    labs(
+        title = "Grouped Linear Models: mpg ~ wt by Cylinder",
+        x = "Weight (1000 lbs)",
+        y = "Miles per gallon"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "right")
+```
+
+**What to look for in the plot:**
+
+- Do the regression lines fit the data well?
+- Are the slopes (gradients) similar across cylinder groups?
+- Do some groups show more variability than others?
+- Would a more complex model (e.g., quadratic) fit better?
+
+---
+
+# Part 3 — Extension: Quadratic Models
+
+The linear models in Part 1 assume a **straight-line relationship** between weight and MPG. But what if the relationship is curved? 
+
+In this section, you'll extend the analysis by fitting **quadratic models** of the form:
+
+$$\text{mpg} = \beta_0 + \beta_1 \times \text{wt} + \beta_2 \times \text{wt}^2 + \epsilon$$
+
+The quadratic term $\text{wt}^2$ allows the model to capture non-linear patterns, such as:
+
+- Diminishing returns (fuel efficiency decreases more rapidly for very heavy cars)
+- Acceleration effects (the impact of weight changes depending on the baseline weight)
+
+## Your Task
+
+Complete the code below to fit quadratic models for each cylinder group. You'll need to:
+
+1. Extract the coefficient for the $\text{wt}^2$ term (`wt2_coef`) and its p-value
+2. Extract model fit statistics (`r_squared`, `adj_r_squared`, `sigma`)
+3. Specify the complete column schema for Spark
+
+
+
+---
+
+# Part 4 — Quadratic Model `mpg ~ wt + wt^2`
+
+<!--  # Your solution here  -->
+
+```{r with-quadratic, eval=FALSE}
+by_cyl_models_quad <- mtcars_tbl %>%
+    spark_apply(
+        function(df) {
+            library(broom)
+            m <- lm(mpg ~ wt + I(wt^2), data = df)
+            coef_df <- tidy(m)
+            model_stats <- glance(m)
+            data.frame(
+                n = as.numeric(nrow(df)),
+                intercept = as.numeric(coef_df$estimate[1]),
+                intercept_pval = as.numeric(coef_df$p.value[1]),
+                wt_coef = as.numeric(coef_df$estimate[2]),
+                wt_coef_pval = as.numeric(coef_df$p.value[2]),
+                wt2_coef =  # Your solution here 
+                wt2_coef_pval =  # Your solution here 
+                r_squared =  # Your solution here 
+                adj_r_squared =  # Your solution here
+                sigma =  # Your solution here 
+            )
+        },
+        group_by = "cyl",
+        columns =  # Your solution here 
+    ) %>%
+    arrange(cyl) %>%
+    collect()
+
+# Display with better formatting
+by_cyl_models_quad %>%
+    mutate(
+        intercept_pval = format.pval(intercept_pval, digits = 3),
+        wt_coef_pval = format.pval(wt_coef_pval, digits = 3),
+        wt2_coef_pval = format.pval(wt2_coef_pval, digits = 3)
+    ) %>%
+    t() %>%
+    knitr::kable(digits = 3)
+```
+
+## Visualize Quadratic Fits
+
+After fitting the quadratic models, we can visualize them to see how they differ from the linear fits. The quadratic curves should better capture any non-linear patterns in the data.
+
+**Questions to consider:**
+
+- Do the quadratic curves fit the data noticeably better than the linear lines?
+- Are the quadratic terms ($\text{wt}^2$) statistically significant (check the p-values)?
+- Does the improvement in $R^2$ justify the added complexity?
+
+```{r plot-quadratic, fig.width=7, fig.height=4.5, eval=FALSE}
+# Create quadratic regression lines from by_cyl_models_quad
+quad_regression_lines <- by_cyl_models_quad %>%
+    rowwise() %>%
+    do({
+        wt_seq <- get_wt_sequence(.$cyl, raw_df)
+        data.frame(
+            cyl = .$cyl,
+            wt = wt_seq,
+            mpg_pred = .$intercept + .$wt_coef * wt_seq + .$wt2_coef * wt_seq^2
+        )
+    }) %>%
+    ungroup()
+
+ggplot() +
+    geom_point(
+        data = raw_df,
+        aes(x = wt, y = mpg, color = factor(cyl)),
+        alpha = 0.7, size = 2.5
+    ) +
+    geom_line(
+        data = quad_regression_lines,
+        aes(x = wt, y = mpg_pred, color = factor(cyl)),
+        linewidth = 1.2
+    ) +
+    scale_color_brewer(palette = "Set1", name = "Cylinders") +
+    # Your solution here 
+    
+```
+
+Compare this plot with the linear model plot from Part 3. Do you see evidence of curvature in the relationships?
+
+---
+
+# Cleanup
+
+
+
+```{r cleanup}
+spark_disconnect(sc)
+```
+
+---

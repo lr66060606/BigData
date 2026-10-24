@@ -1,0 +1,61 @@
+spakr-submit errors mean it could be trying to use a broken install of spark.
+
+
+
+# Check your installed versions of spark:
+library(sparklyr)
+sparklyr::spark_installed_versions()
+sparklyr::spark_home_dir()
+list.files(file.path(sparklyr::spark_home_dir(), "bin"))
+
+
+Your output may be:
+> sparklyr::spark_installed_versions() 
+spark hadoop dir 
+1 4.0.1 2.7 C:\\Users\\andyrox\\AppData\\Local/spark/spark-4.0.1-bin-hadoop2.7 
+2 4.0.1 3 C:\\Users\\andyrox\\AppData\\Local/spark/spark-4.0.1-bin-hadoop3 
+> sparklyr::spark_home_dir()
+ [1] "C:\\Users\\andyrox\\AppData\\Local/spark/spark-4.0.1-bin-hadoop2.7" 
+> list.files(file.path(sparklyr::spark_home_dir(), "bin"))
+ character(0)
+
+This means that sparklyr is defaulting to a broken spark install.
+
+use this to uninstall:
+
+library(sparklyr)
+spark_uninstall(version = "4.0.1", hadoop_version = "2.7")
+
+# you should see:
+# spark-4.0.1-bin-hadoop2.7 successfully uninstalled.
+
+
+
+------- MANUAL REMOVAL (if spark was not installed via sparklyr) ----------
+
+Step 1 — Delete the bad Spark folder
+unlink("C:/Users/andyrox/AppData/Local/spark/spark-4.0.1-bin-hadoop2.7", recursive = TRUE, force = TRUE)
+
+Then verify it’s gone:
+sparklyr::spark_installed_versions()
+
+You should now only see the hadoop3 entry:
+  spark hadoop  dir
+1 4.0.1      3  C:\Users\andyrox\AppData\Local\spark\spark-4.0.1-bin-hadoop3
+
+
+----------------------------------------------------------------------------
+
+# Now tell R which Spark build to use:
+sc <- spark_connect(
+  master = "local[*]",
+  version = "4.0.1",
+  hadoop_version = "3",
+  config = cfg
+)
+
+# verify the active Spark versions
+spark_installed_versions()
+
+.. now run a test script e.g. test_spark_io.R
+

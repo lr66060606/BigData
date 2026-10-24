@@ -1,0 +1,113 @@
+# ============================================================================
+# Docker Compose Configuration - TJU-UOL-Fuzhou Joint College · Big Data Analysis (BDA) Course
+# Applicable Period: Week 8 - Week 10 (All 5 Labs)
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Main Service: RStudio Server (Web GUI)
+  # Image Source: Built on Debian Bookworm Slim, layered as follows:
+  #   Layer 1 System Dependencies: r-base r-base-dev, openjdk-17-jre-headless,
+  #                                libssl-dev libcurl4-openssl-dev libxml2-dev,
+  #                                wget gdebi-core psmisc libuv1-dev perl fontconfig
+  #   Layer 2 RStudio Server: rstudio-server-2024.04.2-764-amd64.deb
+  #   Layer 3 R Packages: sparklyr rmarkdown neo4r igraph dplyr ggplot2 bnlearn(4.8.1)
+  #   Layer 4 Apache Spark: Spark 3.4.0 (Hadoop 3)
+  #   Layer 5 PDF Support: TinyTeX
+  #   Layer 6 Runtime Configuration: rstudio user, port 8787, rserver startup
+  # --------------------------------------------------------------------------
+  rstudio:
+    # Build configuration (uses Dockerfile in the current directory)
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Explicit image name (for easier management and pushing to registry)
+    image: tjulf-bda:latest
+
+    container_name: bda-rstudio
+    hostname: rstudio-server
+
+    # ===== Port Mapping =====
+    ports:
+      - "127.0.0.1:8787:8787"          # RStudio Web UI access port
+      - "127.0.0.1:4040:4040"         
+
+    # ===== Data Persistence (Critical: prevents student code loss after container removal) =====
+    volumes:
+      # Assignment/code storage directory (after mounting, local ./projects maps to /home/rstudio/projects inside container)
+      - ./projects:/home/rstudio/projects
+      # Unstructured datasets (facilitates data file sharing inside and outside container)
+      - ./data:/home/rstudio/data
+      # (Optional) To save R package installation records, mount .Renviron or .Rprofile; omitted here to keep minimal
+
+    # ===== Resource Limits (Extremely Important) =====
+    # Spark requires large off-heap memory; 4GB is the minimum (2GB easily leads to OOM crashes)
+    mem_limit: 4g
+    mem_reservation: 2g
+
+    # ===== Network Configuration =====
+    # Join custom network to directly access graph database via service name "neo4j"
+    networks:
+      - bda-network
+
+    # ===== Environment Variables (RStudio Server Configuration) =====
+    environment:
+      - USER=rstudio                 # Default login username
+      # Note: PASSWORD is not set because Dockerfile includes --auth-none=1 (passwordless login)
+      # For password login, add - PASSWORD=yourpass here and remove --auth-none from Dockerfile
+      # Set locale for R console and Terminal
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - LANGUAGE=C.UTF-8
+
+    # Restart policy: unless manually stopped, automatically restart after abnormal exit (suitable for long-running teacher servers)
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Auxiliary Service: Neo4j Graph Database (Community Edition)
+  # Corresponding Lab: Neo4j / Work on Assignment 2 - Cypher queries
+  # Note: This service runs independently and communicates with RStudio container via network alias
+  # --------------------------------------------------------------------------
+  neo4j:
+    # Use official Neo4j 5.x Community Edition (best compatibility with Debian Bookworm)
+    image: neo4j:5-community
+
+    container_name: bda-neo4j
+    hostname: neo4j-server
+
+    # ===== Port Mapping =====
+    ports:
+      - "127.0.0.1:7474:7474"          # Neo4j Browser (Web visualization UI, students can open directly in browser)
+      - "127.0.0.1:7687:7687"          # Bolt protocol port (R neo4r package connects through this port)
+
+    # ===== Data Persistence =====
+    volumes:
+      - ./neo4j/data:/data          # Database data files (prevents graph loss after restart)
+      - ./neo4j/logs:/logs          # Log files (for troubleshooting)
+      - ./neo4j/import:/var/lib/neo4j/import  # For bulk CSV data import
+      - ./neo4j/plugins:/plugins    # (Optional) Mount APOC or GDS plugin directory
+
+    # ===== Environment Variable Configuration =====
+    environment:
+      # Unified password for teaching environment (simple and easy to remember, never use in production)
+      - NEO4J_AUTH=neo4j/bda2026fz
+      # Enable APOC plugin (enhances graph algorithm features, helpful for knowledge graph relation inference)
+      # - NEO4J_PLUGINS=["apoc"]
+
+    # ===== Resource Limits =====
+    mem_limit: 2g
+    mem_reservation: 1g
+
+    # Restart policy
+    restart: unless-stopped
+
+    # ===== Network =====
+    networks:
+      - bda-network
+
+# ============================================================================
+# Custom Network (Enables RStudio container to access Neo4j container via hostname "neo4j")
+# ============================================================================
+networks:
+  bda-network:
+    driver: bridge

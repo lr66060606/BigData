@@ -1,0 +1,6 @@
+projects
+data
+neo4j
+.DS_Store
+**/._*
+*.zip

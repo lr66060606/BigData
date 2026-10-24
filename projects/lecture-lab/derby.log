@@ -1,0 +1,13 @@
+----------------------------------------------------------------
+Sat Oct 24 07:56:25 UTC 2026:
+Booting Derby version The Apache Software Foundation - Apache Derby - 10.14.2.0 - (1828579): instance a816c00e-01a1-6ce9-3742-000001ff3e08 
+on database directory memory:/home/rstudio/projects/lecture-lab/databaseName=metastore_db with class loader jdk.internal.loader.ClassLoaders$AppClassLoader@5ffd2b27 
+Loaded from file:/opt/spark/spark-3.4.0-bin-hadoop3/jars/derby-10.14.2.0.jar
+java.vendor=Debian
+java.runtime.version=17.0.20.1+1-1-deb12u1-Debian
+user.dir=/home/rstudio/projects/lecture-lab
+os.name=Linux
+os.arch=amd64
+os.version=6.18.54.1-microsoft-standard-WSL2
+derby.system.home=null
+Database Class Loader started - derby.database.classpath=''

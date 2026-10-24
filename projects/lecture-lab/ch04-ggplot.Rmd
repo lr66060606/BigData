@@ -1,0 +1,160 @@
+---
+title: "R Plotting with ggplot2"
+author: "Dom Richards"
+date: "2025-10-13"
+output:
+    pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Introduction to ggplot2
+
+Before we get into unsupervised learning, we'll take some time to introduce plotting in R.
+
+R has a tidyverse package called ggplot2. ggplot2 provides a domain-specific language for data visualisation. You build plots incrementally, starting with a simple plot object and adding features with a special addition (`+`) operator. Each addition returns a new plot object. Hence, the `+` operator allows you to compose plot instructions to build plots from simple building blocks.
+
+Here's a simple example (we'll unpack it shortly):
+
+```{r}
+library(ggplot2)
+ggplot(mpg, aes(displ, hwy)) +
+  geom_point() +
+  geom_smooth(se = FALSE)
+```
+
+- The **gg** in ggplot2 stands for **Grammar of Graphics**.
+- ggplot2 is based on Grammar of Graphics, a language proposed by Leland Wilkinson for describing statistical graphs:
+    - Wilkinson, L. (2005), _The Grammar of Graphics_, 2nd ed., Springer.
+- Useful Resource: [ggplot2 cheat sheet](https://ggplot2.tidyverse.org/reference/)
+
+Plots are described as a stack of layers, with each layer describing one of the following attributes:
+
+- **Data**: The dataset (rows = cases, columns = variables)
+- **Aesthetics (aes)**: Visual properties mapped to data (x, y, colour, fill, size, shape, etc.)
+- **Geoms**: Geometric objects that draw marks: points, lines, bars, boxplots, etc.
+- **Stats**: Statistical transforms that summarise data before drawing: binning, smoothing, density estimation, counts, summaries
+- **Scales**: Scales map data values to the visual values of an aesthetic. To change a mapping, add a new scale.
+- **Coordinates**: How data space is mapped to the plotting plane: Cartesian, polar, map projections, flipped coordinates
+- **Facets**: Facets divide a plot into subplots based on the values of one or more discrete variables.
+- **Position**: Position adjustments determine how to arrange geoms that would otherwise occupy the same space.
+- **Theme & Guides**: Non-data ink: fonts, grid lines, margins, legend placement; legends and colour bars
+
+## Example Dataset
+
+We'll introduce ggplot2 using R's built-in `mtcars` dataset, which relates car weight (`wt`) to miles per gallon (`mpg`), plus a few other features.
+
+Here are the first few rows:
+
+```{r}
+head(mtcars)
+```
+
+Here's a minimal example of a scatter plot of `wt` vs `mpg` from the built-in `mtcars` dataset:
+
+```{r}
+ggplot(mtcars, aes(x = wt, y = mpg)) + geom_point()
+```
+
+This short chunk does three things:
+
+1. Declares that the `mtcars` dataset supplies the data.
+2. Maps car weight to the x-axis and miles per gallon to the y-axis via the aesthetics function (which we'll see a lot of).
+3. Adds a single geometry layer with `geom_point()` to draw the scatter plot.
+
+Nothing else is specified, so every other plot component—scales, coordinates, guides, and theme—falls back to ggplot2's defaults.
+
+## Adding Stats
+
+The above plot was quite basic. We can enhance it by adding a grid and a smoothing line:
+
+```{r}
+ggplot(mtcars, aes(wt, mpg)) +
+  geom_point(colour = "red") +
+  theme(
+    panel.grid.major = element_line(colour = "grey50", linewidth = 0.4),
+    panel.grid.minor = element_line(colour = "grey70", linewidth = 0.25)
+  ) +
+  geom_smooth(se = TRUE)
+```
+
+`geom_smooth()` adds a smoothed line to the plot, helping to visualise the trend in the data. The gray ribbon (below) shows a confidence interval around the smooth.
+
+## Mapping vs Setting Aesthetics
+
+If we add a colour aesthetic inside `aes()`, ggplot2 will map the colour to a variable in the dataset and create a legend:
+
+```{r}
+ggplot(mtcars, aes(wt, mpg, colour = factor(cyl))) +
+  geom_point() +
+  theme(
+    panel.grid.major = element_line(color = "grey50", linewidth = 0.4),
+    panel.grid.minor = element_line(color = "grey70", linewidth = 0.25)
+  )
+```
+
+_(注：此处原幻灯片代码中 `theme()` 块重复出现了两次，恢复时已去重)_
+
+We can also use the point colour to represent another variable, such as horsepower (`hp`):
+
+```{r}
+ggplot(mtcars, aes(wt, mpg, colour = hp)) +
+  geom_point() +
+  theme(
+    panel.grid.major = element_line(colour = "grey50", linewidth = 0.4),
+    panel.grid.minor = element_line(colour = "grey70", linewidth = 0.25)
+  ) +
+  scale_colour_viridis_c(option = "C")
+```
+
+- `colour = hp` maps horsepower (a continuous variable) to color intensity
+- `scale_colour_viridis_c(option = "C")` uses the viridis color scale
+
+## Facets: Small Multiples
+
+Facets divide a plot into subplots based on the values of one or more discrete variables.
+
+- `facet_wrap(~ cyl, nrow = 1)` creates separate panels for each cylinder count (4, 6, 8)
+- `nrow = 1` arranges all panels in a single row
+- Each panel shows the same x-y relationship but filtered to cars with that specific cylinder count
+- This is powerful for comparing patterns across different subgroups
+
+```{r}
+ggplot(mtcars, aes(wt, mpg)) +
+  geom_point() +
+  theme(
+    panel.grid.major = element_line(colour = "grey50", linewidth = 0.4),
+    panel.grid.minor = element_line(colour = "grey70", linewidth = 0.25)
+  ) +
+  facet_wrap(~cyl, nrow = 1)
+```
+
+_(注：原 PDF 文本中提取为 `facet_wrap(-cyl)`，根据 R 语法和图片逻辑修正为 `~cyl`)_
+
+## Complex Plot Example
+
+Finally, here's a more complex example combining several of the elements we've discussed:
+
+```{r}
+ggplot(mtcars, aes(x = wt, y = mpg, colour = factor(cyl))) +
+  geom_point() +
+  geom_smooth(se = TRUE) +
+  labs(
+    title = "Fuel efficiency vs car weight",
+    x = "Weight (1000 lbs)",
+    y = "Miles per gallon",
+    colour = "Cylinders"
+  ) +
+  theme_minimal(base_size = 9) +
+  theme(
+    panel.grid.major = element_line(colour = "grey50", linewidth = 0.4),
+    panel.grid.minor = element_line(colour = "grey70", linewidth = 0.25),
+    plot.title = element_text(size = 11),
+    axis.title = element_text(size = 8.5),
+    axis.text = element_text(size = 7.5),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 7.5)
+  )
+```

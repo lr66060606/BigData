@@ -1,0 +1,630 @@
+---
+title: ": Bayesian Belief Networks in R"
+subtitle: "COMP336/COMP529 (Big Data Analytics) Lab Wk11"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Intro
+
+In this lab you will use R to build and explore a **Bayesian Belief Network (BBN)** for the famous **Monty Hall problem**.
+
+Although the example is small, the ideas generalise to Big Data Analytics:
+
+-   modelling complex systems using probabilistic graphs,
+-   updating beliefs when new evidence arrives,
+-   comparing strategies under uncertainty.
+
+You will be required to just read the commentary, run the code, and experiment where requested.
+
+------------------------------------------------------------------------
+
+## Learning Outcomes
+
+By the end of this lab you should be able to:
+
+1.  Explain what a Bayesian Network is and how it represents dependencies.
+2.  Build a small BBN in R using bnlearn and gRain.
+3.  Define and interpret Conditional Probability Tables (CPTs).
+4.  Perform probabilistic inference given evidence.
+5.  Extend a BBN with decision (Strategy) and outcome (Win) nodes.
+6.  Understand the difference between simulation and model-based inference.
+
+------------------------------------------------------------------------
+
+# 1. The Monty Hall Problem
+
+Imagine a game show:
+
+-   There are **three closed doors**.
+-   Behind **one** door is a **car** (the prize).
+-   Behind the **other two** doors are **goats**.
+
+The game proceeds:
+
+1.  You choose one door (but do not open it).
+2.  The host, Monty Hall,
+    -   knows where the car is,
+    -   never opens your chosen door,
+    -   never opens the door with the car.\
+3.  Monty opens one of the *other* doors and reveals a **goat**.
+4.  He asks:\
+    **“Do you want to stay with your original choice or switch to the other unopened door?”**
+
+If you've not come across this problem before, have a think about what you would choose to do and why, before continuing reading.\
+\
+\
+\
+\
+\
+The result (which many people find unintuitive):
+
+-   Probability of winning if you **stay**: **1/3**
+-   Probability of winning if you **switch**: **2/3**
+
+This lab shows why, using both **simulation** and a **Bayesian Network**.
+
+------------------------------------------------------------------------
+
+# 2. Load Packages
+
+```{r}
+# Install packages first
+# (uncomment the following to install the packages on first use)
+#
+# install.packages("bnlearn")
+# install.packages("gRain")
+# install.packages("DiagrammeR")
+
+```
+
+```{r}
+# load the libraries
+library(bnlearn)
+library(gRain)
+library(DiagrammeR)
+```
+
+You will use:
+
+-   `bnlearn` to define the structure and CPTs of the Bayesian Network,
+-   `gRain` to perform inference,
+-   `DiagrammeR` to visualise the network.
+
+------------------------------------------------------------------------
+
+# 3. Warm-Up: Simulation Intuition
+
+Before we build any model, we can **simulate** many games and look at the **empirical frequencies**. This is analogous to using **large datasets** to estimate probabilities. \
+An empirical frequency is the proportion of simulations in which an event occurs; as the number of simulations increases, these observed frequencies converge toward the true probabilities.
+
+```{r}
+set.seed(123)
+
+N <- 10000  # number of simulated games
+
+prize  <- sample(1:3, N, replace = TRUE)  # where the car is
+choice <- sample(1:3, N, replace = TRUE)  # initial player choice
+
+monty <- sapply(1:N, function(i) {
+  doors <- setdiff(1:3, c(choice[i], prize[i]))
+  if (length(doors) == 1) return(doors)
+  sample(doors, 1)
+})
+
+stay   <- prize == choice
+switch <- prize != choice
+
+c(stay = mean(stay), switch = mean(switch))
+```
+
+You should see:
+
+-   `stay` ≈ 0.33
+-   `switch` ≈ 0.67
+
+This is a **data-driven** view: with large $N$, empirical frequencies approximate true probabilities.\
+
+------------------------------------------------------------------------
+
+### Task 1 (Simulation)
+
+1.  Change `N` to 100, 1000, and 100000.
+2.  Observe how stable the estimates are.
+3.  In real Big Data problems, we rely on **large N** to reduce noise in estimates.
+
+------------------------------------------------------------------------
+
+# 4. Bayesian Networks: Structure
+
+Simulation is powerful, but it only gives **empirical** answers.
+
+A **Bayesian Network** builds a *structured model*:
+
+-   Variables are nodes.
+-   Directed edges indicate direct influence (causal or probabilistic).
+-   The network encodes **conditional independence** assumptions.
+
+For Monty Hall, we model:
+
+-   **Prize** : door hiding the car.
+-   **Choice** : the contestant’s first pick.
+-   **Monty** : the door that Monty opens.
+
+## 4.1 The DAG (Directed Acyclic Graph)
+
+**Key assumptions:**
+
+-   `Prize` and `Choice` are independent.
+-   `Monty` depends on both.
+
+Mathematically:
+
+-   Prize → Monty
+-   Choice → Monty
+
+Monty is a **collider** (two arrows pointing in).
+
+```{r}
+dag <- model2network("[Prize][Choice][Monty|Prize:Choice]")
+dag
+```
+
+### Visualise the DAG
+
+```{r}
+DiagrammeR::grViz("
+digraph {
+  graph [layout=dot, rankdir=LR]
+  node [shape=box, style=filled, color=lightblue]
+  Prize -> Monty
+  Choice -> Monty
+}
+")
+```
+
+------------------------------------------------------------------------
+
+### Commentary: Colliders and Conditional Dependence
+
+-   Initially, `Prize` ⟂ `Choice` (independent).
+-   `Monty` is influenced by both.
+-   Once you **observe Monty’s action**, `Prize` and `Choice` become **conditionally dependent**.
+
+This is a classic **collider** structure:
+
+$$
+Prize \rightarrow Monty \leftarrow Choice
+$$
+
+**Rule:**\
+Parents of a collider are independent, but become dependent once the collider is observed.
+
+This effect underlies the Monty Hall paradox.
+
+------------------------------------------------------------------------
+
+### Task 2 (Structure)
+
+1.  Re-run the diagram code until you are comfortable with the structure.
+
+2.  Try changing the DAG to incorrectly make `Choice` depend on `Prize`:
+
+    ```{r}
+    dag_wrong <- model2network("[Prize][Monty|Prize:Choice][Choice|Prize]")
+    dag_wrong
+    ```
+
+3.  Observe how this changes the *assumed* dependency structure.
+
+**Auto-check (optional): is your main `dag` still the original structure?**
+
+```{r}
+check_dag <- function(dag) {
+  expected <- model2network("[Prize][Choice][Monty|Prize:Choice]")
+  if (all.equal(dag, expected) == TRUE) {
+    cat("DAG check: OK (structure is as expected)\n")
+  } else {
+    cat("DAG check: WARNING - DAG structure has changed.\n")
+  }
+}
+
+check_dag(dag)
+```
+
+------------------------------------------------------------------------
+
+# 5. Defining CPTs (Conditional Probability Tables)
+
+Each node has a **CPT**:
+
+-   If it has no parents → just a probability distribution.
+-   If it has parents → a table of conditional probabilities.
+
+## 5.1 Prize: Uniform Distribution
+
+```{r}
+cpt.prize <- cptable(
+  ~Prize,
+  values = c(1/3, 1/3, 1/3),
+  levels = c("Door1", "Door2", "Door3")
+)
+cpt.prize
+```
+
+## 5.2 Choice: Uniform Distribution
+
+```{r}
+cpt.choice <- cptable(
+  ~Choice,
+  values = c(1/3, 1/3, 1/3),
+  levels = c("Door1", "Door2", "Door3")
+)
+cpt.choice
+```
+
+## 5.3 Monty: Constrained Behaviour
+
+Monty must:
+
+-   never open the door with the prize,
+-   never open the player’s chosen door,
+-   choose randomly among valid goat doors.
+
+```{r}
+cpt.monty <- cptable(
+  ~Monty | Prize + Choice,
+  values = c(
+    0,   1/2, 1/2,
+    0,   0,   1,
+    0,   1,   0,
+    0,   0,   1,
+    1/2, 0,   1/2,
+    1,   0,   0,
+    0,   1,   0,
+    1,   0,   0,
+    1/2, 1/2, 0
+  ),
+  levels = c("Door1","Door2","Door3")
+)
+cpt.monty
+```
+
+------------------------------------------------------------------------
+
+### Auto-check: CPT Validity
+
+Let us verify that each conditional distribution for `Monty` sums to 1.
+
+```{r}
+cpt_monty_matrix <- matrix(
+  c(
+    0,   1/2, 1/2,
+    0,   0,   1,
+    0,   1,   0,
+    0,   0,   1,
+    1/2, 0,   1/2,
+    1,   0,   0,
+    0,   1,   0,
+    1,   0,   0,
+    1/2, 1/2, 0
+  ),
+  byrow = TRUE,
+  ncol = 3
+)
+
+row_sums <- rowSums(cpt_monty_matrix)
+row_sums
+if (all(abs(row_sums - 1) < 1e-8)) {
+  cat("CPT check: OK (all rows sum to 1)\n")
+} else {
+  cat("CPT check: WARNING - some rows do not sum to 1\n")
+}
+```
+
+------------------------------------------------------------------------
+
+### Task 3 (CPT experimentation)
+
+1.  Change one row of `cpt.monty` so that Monty is *biased* (e.g. prefers Door2 when possible).
+2.  Re-run the CPT validity check.
+3.  Later, observe how this affects the posterior probabilities.
+
+------------------------------------------------------------------------
+
+# 6. Compile the Network and Run Inference
+
+We now build the Bayesian Network and compile it for inference.
+
+```{r}
+cpt.list <- compileCPT(list(cpt.prize, cpt.choice, cpt.monty))
+bn.fit   <- custom.fit(dag, cpt.list)
+bn.grain <- compile(as.grain(bn.fit))
+```
+
+### Conditioning on Evidence
+
+Scenario: you choose **Door1**, and Monty opens **Door3**.
+
+```{r}
+evidence <- setEvidence(
+  bn.grain,
+  nodes  = c("Choice", "Monty"),
+  states = c("Door1",  "Door3")
+)
+
+posterior <- querygrain(evidence, nodes = "Prize")
+posterior
+```
+
+### Visualise the Posterior
+
+The posterior is the probability distribution over the Prize node after conditioning on the observed evidence (your choice, and the door Monty opens); it reflects how the new information reshapes our beliefs compared with the prior.
+
+```{r}
+barplot(
+  posterior$Prize,
+  col  = "steelblue",
+  main = "Posterior Probability of Prize",
+  ylim = c(0, 1)
+)
+```
+
+You should see that `Door2` now has probability ≈ 2/3.
+
+------------------------------------------------------------------------
+
+### Task 4 (Changing Evidence)
+
+1.  Change the evidence to try other combinations, e.g.:
+
+    -   Choice = Door2, Monty = Door3
+    -   Choice = Door2, Monty = Door1
+
+2.  For each case, run the posterior query and barplot.
+
+3.  Observe a pattern: the *remaining* unopened door (not your choice, not Monty’s) tends to have higher probability.
+
+------------------------------------------------------------------------
+
+# 7. Simulation vs Model-Based Inference 
+
+At this point, you have seen:
+
+-   **Simulation**: brute-force Monte Carlo approximation.
+-   **Bayesian Network**: analytical inference using a structured model.
+
+In real Big Data Analytics, we often use *simulation* and *sampling* (e.g. Monte Carlo, MCMC), and
+
+*structured models* (Bayesian Networks, graphical models) to reason about high-dimensional distributions.
+
+The Monty Hall problem is small, but the same ideas scale to models with hundreds or thousands of variables.
+
+------------------------------------------------------------------------
+
+# 8. Extending the Network: Strategy and Win
+
+We now extend the BBN to include:
+
+-   **Strategy** — `Stay` or `Switch`
+-   **Win** — whether you win the car (`Yes`/`No`)
+
+This turns our network into a simple **decision model**.
+
+## 8.1 Extended DAG
+
+```{r}
+DiagrammeR::grViz("
+digraph {
+  graph [layout=dot, rankdir=LR]
+
+  node [shape=box, style=filled, fillcolor=lightyellow]
+
+  Prize -> Monty
+  Choice -> Monty
+  Prize -> Win
+  Choice -> Win
+  Strategy -> Win
+
+  subgraph cluster_inputs {
+    label = 'Inputs';
+    style='filled'; fillcolor='lightblue';
+    Prize; Choice; Strategy;
+  }
+
+  subgraph cluster_outputs {
+    label = 'Outputs';
+    style='filled'; fillcolor='lightgrey';
+    Monty; Win;
+  }
+}
+")
+```
+
+**Interpretation:**
+
+-   `Monty` still depends on `Prize` and `Choice`.
+-   `Win` depends on `Prize`, `Choice`, and `Strategy`.
+-   `Monty` does **not** directly affect `Win`—he only reveals information.
+
+This mirrors real decision-support systems in analytics:\
+we separate **states** (Prize), **actions** (Strategy), and **outcomes** (Win).
+
+------------------------------------------------------------------------
+
+## 8.2 Strategy CPT
+
+We assume a 50/50 prior over strategies:
+
+```{r}
+cpt.strategy <- cptable(
+  ~Strategy,
+  values = c(1/2, 1/2),
+  levels = c("Stay", "Switch")
+)
+cpt.strategy
+```
+
+*(We will later ask you to change this.)*
+
+------------------------------------------------------------------------
+
+## 8.3 Win CPT
+
+Rules:
+
+-   If you **Stay**, you win if Prize == Choice.
+-   If you **Switch**, you win if Prize != Choice.
+
+```{r}
+# FIXED: Construct Win CPT in the same parent ordering used internally by gRain
+parents <- list(
+  Prize    = c("Door1","Door2","Door3"),
+  Choice   = c("Door1","Door2","Door3"),
+  Strategy = c("Stay","Switch")
+)
+
+rows <- expand.grid(
+  Prize    = parents$Prize,
+  Choice   = parents$Choice,
+  Strategy = parents$Strategy
+)
+
+# Compute Win outcome
+win_yes <- with(rows, ifelse(
+  Strategy == "Stay"   & Prize == Choice, 1,
+  ifelse(Strategy == "Switch" & Prize != Choice, 1, 0)
+))
+
+win_no <- 1 - win_yes
+
+# Interleave probabilities in canonical order: (No, Yes)
+win.values <- as.vector(t(cbind(win_no, win_yes)))
+
+# CPT with canonical parent ordering
+cpt.win <- cptable(
+  ~Win | Prize + Choice + Strategy,
+  values = win.values,
+  levels = c("No","Yes")
+)
+
+```
+
+------------------------------------------------------------------------
+
+## 8.4 Build and Compile the Extended Network
+
+```{r}
+dag2 <- model2network("[Prize][Choice][Monty|Prize:Choice][Strategy][Win|Prize:Choice:Strategy]")
+
+cpt.full <- compileCPT(list(
+  cpt.prize, cpt.choice, cpt.monty,
+  cpt.strategy, cpt.win
+))
+
+fit.full <- custom.fit(dag2, cpt.full)
+bn.full  <- compile(as.grain(fit.full))
+```
+
+------------------------------------------------------------------------
+
+## 8.5 Compare Strategies via Inference
+
+We use the same evidence as before: Choice = Door1, Monty = Door3.
+
+```{r}
+evid <- setEvidence(
+  bn.full,
+  nodes  = c("Choice", "Monty"),
+  states = c("Door1",  "Door3")
+)
+```
+
+### Overall Win Probability (mixed strategies)
+
+```{r}
+querygrain(evid, nodes = "Win", type = "marginal")
+```
+
+### Win Probability if You Stay
+
+```{r}
+querygrain(
+  setEvidence(evid, nodes = "Strategy", states = "Stay"),
+  nodes = "Win"
+)
+```
+
+### Win Probability if You Switch
+
+```{r}
+querygrain(
+  setEvidence(evid, nodes = "Strategy", states = "Switch"),
+  nodes = "Win"
+)
+```
+
+You should see:
+
+-   `Stay` → P(Win = Yes) ≈ 1/3
+-   `Switch` → P(Win = Yes) ≈ 2/3
+
+------------------------------------------------------------------------
+
+### Task 5 (Strategy Bias)
+
+1.  Change `cpt.strategy` to:
+
+    ```{r}
+    cpt.strategy <- cptable(
+      ~Strategy,
+      values = c(0.9, 0.1),
+      levels = c("Stay", "Switch")
+    )
+    ```
+
+2.  Rebuild the network (`compileCPT`, `custom.fit`, `as.grain`) and re-run the queries.\
+
+3.  Observe: **overall** win probability decreases, because most players now choose the inferior strategy.
+
+This reflects how in real analytics, **poor decision policies** reduce performance even when the environment (Prize distribution) is unchanged.
+
+------------------------------------------------------------------------
+
+### Task 6 (Breaking Monty’s Rules)
+
+1.  Modify `cpt.monty` so that occasionally Monty opens the **prize door** (e.g. 10% of the time in one row).
+2.  Re-run the extended network and compare `Stay` and `Switch` win probabilities.
+
+Questions to think about (no written answer required):
+
+-   Does switching still dominate?
+-   Does Monty’s behaviour still convey the same information?
+
+This shows how **small changes in model assumptions** can dramatically alter optimal strategies.
+
+------------------------------------------------------------------------
+
+# 9. Summary
+
+In this lab you have:
+
+-   Simulated the Monty Hall game as a data-generating process.
+-   Built a Bayesian Network model of the game using `bnlearn` and `gRain`.
+-   Explored colliders, conditional dependence, and inference.
+-   Extended the network with Strategy and Win to create a decision model.
+-   Seen how changing CPTs and priors affects optimal decisions.
+
+These are core ideas in Big Data Analytics:
+
+-   The importance of structure in probabilistic models.
+-   The role of assumptions in determining inference.
+-   The use of models to compare strategies and support decision-making.

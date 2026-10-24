@@ -1,0 +1,96 @@
+---
+title: "K-Means Clustering in Sparklyr"
+author: "Dom Richards"
+date: "2025-10-13"
+output:
+    pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# K-Means Clustering
+
+- NVIDIA provides a GPU-accelerated DBSCAN for Spark, shipped in the `spark-rapids-ml` package, which is outside the scope of this course.
+- We can, however, use Spark's built-in K-means clustering algorithm.
+- For a given \(k\), we can apply k-means to the `iris` dataset using the `ml_kmeans()` function.
+- Here, we use the `Petal_Length` and `Petal_Width` features to cluster the data into 3 clusters:
+
+```{r}
+set.seed(42)
+kmeans_model <- iris_tbl %>%
+  ml_kmeans(k = 3, features = c("Petal_Length", "Petal_Width"), seed = 42)
+
+kmeans_model
+```
+
+```
+## K-means clustering with 3 clusters
+##
+## Cluster centers:
+##   Petal_Length Petal_Width
+## 1     1.462000    0.246000
+## 2     5.595833    2.037500
+## 3     4.269231    1.342308
+##
+## Within Set Sum of Squared Errors = not computed.
+```
+
+## Predict cluster membership
+
+We can use the fitted model to predict cluster membership for each observation in the dataset:
+
+```{r}
+predicted <- ml_predict(kmeans_model, iris_tbl) %>%
+  collect()
+
+predicted %>%
+  count(Species, prediction) %>%
+  mutate(prediction = paste0("Cluster_", prediction)) %>%
+  tidyr::pivot_wider(names_from = prediction, values_from = n, values_fill = 0) %>%
+  knitr::kable(digits = 3)
+```
+
+| Species    | Cluster_0 | Cluster_1 | Cluster_2 |
+| :--------- | :-------- | :-------- | :-------- |
+| setosa     | 50        | 0         | 0         |
+| versicolor | 0         | 2         | 48        |
+| virginica  | 0         | 46        | 4         |
+
+We can see that the species map fairly well to the clusters, although there is some mixing between _versicolor_ and _virginica_.
+
+## Visualize clusters and centres
+
+We can plot the clusters as follows:
+
+```{r}
+centres <- kmeans_model$centers # local data.frame with Petal_Length / Petal_Width
+
+ggplot(predicted, aes(Petal_Length, Petal_Width)) +
+  geom_point(aes(color = factor(prediction)), size = 2, alpha = 0.6) +
+  geom_point(data = centres, aes(Petal_Length, Petal_Width), shape = 4, size = 6, stroke = 1.2) +
+  scale_color_discrete(name = "Predicted Cluster", labels = paste("Cluster", 0:2)) +
+  labs(
+    title = "K-Means on Iris (k = 3)",
+    subtitle = "Spark ML clusters using Petal Length & Petal Width",
+    x = "Petal Length",
+    y = "Petal Width"
+  )
+```
+
+_(注：此处为原幻灯片第 90 页的散点图，展示了各聚类的分布以及中心点标记。)_
+
+Finally, we can use a facet plot to see how the clusters correspond to the species:
+
+```{r}
+ggplot(predicted, aes(Petal_Length, Petal_Width)) +
+  geom_point(aes(color = factor(prediction)), size = 2, alpha = 0.6) +
+  facet_wrap(~Species, nrow = 1) +
+  labs(
+    title = "Clusters by Species",
+    x = "Petal Length",
+    y = "Petal Width",
+    color = "Predicted Cluster"
+  )
+```

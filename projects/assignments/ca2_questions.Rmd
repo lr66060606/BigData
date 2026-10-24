@@ -1,0 +1,342 @@
+---
+title: 'COMP529 Big Data Analytics: CA2 (PCA Assignment)'
+author: "PUT YOUR NAME AND STUDENT ID HERE"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+    df_print: paged
+---
+
+# Important — Read This First
+
+-   Open this file in **RStudio**.
+-   Switch to **Visual Mode** (button at the top-left of the editor).
+-   Complete all R code chunks marked with `# YOUR CODE GOES HERE`.
+-   If you are given a hint, try using RStudio's Help feature for the given keyword - e.g. for 'plot', type\
+    **?plot**\
+    into the console and you will see useful help information appear in the Help pane.
+-   Write your explanations in the **Explanation boxes** below each question.
+    -   Do **not delete** the line starting with `# Qx_EXPLANATION` — it helps us identify your answers.
+-   When finished, click **Knit → HTML** to output your answers.
+-   Submit **both the HTML file and the Rmd file** via Canvas.
+
+In this assignment you will clean financial time-series data, build a consistent panel of daily closing prices, compute daily returns, and apply Principal Component Analysis (PCA) to study how market-wide factors explain variation in stock movements. Each question builds step-by-step toward the PCA analysis.
+
+```{r setup, include=FALSE}
+# setup chunk configures the R Markdown document
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Environment Setup
+
+```{r q0_setup}
+# Required packages
+# Uncomment to install any that are missing:
+# install.packages(c("tidyverse", "lubridate", "inflection"))
+
+library(tidyverse)
+library(lubridate)
+library(inflection)
+```
+
+# Helper Functions
+
+```{r helpers}
+# Elbow finder function (distance-from-line method)
+find_elbow <- function(x, y) {
+  x <- (x - min(x)) / (max(x) - min(x))
+  y <- (y - min(y)) / (max(y) - min(y))
+  y_smooth <- stats::filter(y, rep(1/3, 3), sides = 2)
+  y_smooth[is.na(y_smooth)] <- y[is.na(y_smooth)]
+  p1 <- c(x[1], y_smooth[1])
+  p2 <- c(x[length(x)], y_smooth[length(y_smooth)])
+  dist <- abs((p2[2] - p1[2]) * x - (p2[1] - p1[1]) * y_smooth + 
+              p2[1]*p1[2] - p2[2]*p1[1]) /
+          sqrt((p2[2] - p1[2])^2 + (p2[1] - p1[1])^2)
+  bias <- seq_along(dist)
+  dist_adj <- dist / sqrt(bias)
+  which.max(dist_adj)
+}
+```
+
+------------------------------------------------------------------------
+
+## Q1 : Load data
+
+**Tasks:**\
+Unzip `stock_data.zip`, which contains historical market data for stocks in the S&P 500 index.\
+The S&P 500 is a stock market index tracking the performance of 500 large companies listed on stock exchanges in the United States.\
+\
+(a) Load the data from the CSV file into an R data frame. It should have 7 columns:\
+*`Date`: the date for a given set of observations\
+`Open`: the price of a given stock on a given date, at opening time on the relevant stock exchange\
+`High`: the highest price reached by a given stock on a given date\
+`Low`: the lowest price reached by a given stock on a given date\
+`Close`: the price of a given stock on a given date, at closing time on the relevant stock exchange\
+`Volume`: the total volume traded for a given stock on a given date\
+`Name`: The stock name*\
+This assignment will use the `Date`, `Close`, and `Name` columns.\
+\
+(b) Use `glimpse` to display a preview of the data.\
+\
+**Hint:** the `readr` package is useful when loading data from files.\
+Ensure that the file path provided is correct relative to the current working directory. If you're unsure, check your working directory in the console using `getwd()`.\
+There is no code explanation needed for Q1.
+
+```{r q1_load_data}
+# YOUR CODE GOES HERE
+```
+
+------------------------------------------------------------------------
+
+## Q2 : Distinct tickers
+
+**Tasks:**\
+(a) Identify the set of all unique tickers (from the `Name` column), sorted alphabetically.\
+(b) How many tickers are there?\
+(c) List the first 5 tickers.\
+(d) List the last 5 tickers.
+
+**Hints:**\
+`distinct()`, `arrange()`, and `pull()` may help with part (a).\
+Functions like `length()`, `head()`, and `tail()` will help with parts (b), (c), and (d).
+
+```{r q2_distinct_tickers}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q2_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q3 : Filter tickers by coverage
+
+**Tasks:**\
+(a) Remove all tickers whose first available date is after 1st November 2019 or whose last available date is before 31st October 2022.\
+(b) Which tickers were removed? (Display the ticker names.)\
+(c) How many tickers remain?\
+\
+**Hints:** You might want to group the data by `Name` using `group_by()`. Then, consider calculating each ticker’s first and last date with `summarise(min(Date), max(Date))`. You could use `filter()` to compare these dates with the required window. To identify which tickers were kept vs removed, `setdiff()` might be helpful.\
+After filtering out the above names, you should be left with all of the names which have market data for at least the 3 years period 1st November 2019 – 31st October 2022. You should have removed a small number of names: these are stocks which **started trading after 1st November 2019** or **ceased trading before 31st October 2022**. You should be left with close to 500 names. Use these 500-ish names for the rest of the assignment. The names you removed will not be used again, because they don’t have sufficient market data.
+
+```{r q3_filter_tickers}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q3_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q4 : Common trading dates
+
+**Tasks:**\
+(a) Identify the set of dates that are common to all remaining tickers.\
+(b) Remove all the dates that are before **1st November 2019 or after 31st October 2022.**
+
+By identifying common dates, we ensure that every stock has data for the same set of days, which is crucial for performing comparisons, statistical analysis, or any kind of multivariate analysis later.\
+\
+(c) How many dates are left?\
+(d) List the first 5 dates\
+(e) List the last 5 dates.\
+\
+**Hints:** `filter()` could be used here. For each date, count how many *distinct* tickers appear using `n_distinct(Name)`.\
+A “common” date is one where the count equals the number of remaining tickers.\
+There are approximately 250 trading days in a year, and the period 1st November 2019 to 31st October 2022 spans 3 years. So, you should be left with approximately 250 \* 3 = 750 dates. The first 5 dates should be close to (but not before) 1st November 2019. The last 5 dates should be close to (but not after) 31st October 2022.
+
+```{r q4_common_dates}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q4_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q5 : Build wide close-price data frame
+
+**Tasks:**\
+(a) Build a new wide data frame (aka *tibble*) that has a column for each of the tickers from Q3 and a row for each of the dates from Q4. The data frame should contain the `Close` values for each corresponding ticker and date.\
+(b) Print the resulting data frame.\
+\
+**Hint:** `pivot_wider()` is useful here.\
+Make sure you include only the **common dates** from Q4, otherwise you will see `NA`s.
+
+```{r q5_close_wide}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q5_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q6 : Calculate returns
+
+**Tasks:**\
+(a) Create another data frame/tibble containing daily simple returns calculated as:\
+`return(Name, Date) = (Close(Name, Date) - Close(Name, previous Date)) / Close(Name, previous Date)`\
+Note that this dataframe should have one fewer row than the data frame from Q5, because returns can’t be calculated for the first date.\
+(b) Output the data frame with `print()`.\
+\
+**Hints:** `lag()` accesses the previous row’s closing price, also consider `across()` to apply the calculation to all columns except the Date.\
+Remember: `return = (price_t - price_{t-1}) / price_{t-1}`\
+The first row of returns will be `NA` for every stock. `slice()` may be useful.
+
+```{r q6_calculate_returns}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q6_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q7 : PCA on returns
+
+**Tasks:**\
+(a) Use the function `prcomp()` to calculate the principal components of the returns from Q6.\
+\
+The PCA loadings show how each ticker contributes to each principal component. Large positive or negative loadings indicate strong influence on that component. PCA helps reveal the main underlying factors that explain variance in stock returns, and is commonly used in finance to identify shared trends across assets.\
+\
+(b) Print the loadings for the top five principal components. The loadings are stored in the `$rotation` matrix of the PCA result (use whatever variable name you assigned the `prcomp()` output to).\
+\
+**Hints:** Remember to remove the Date column and convert the remaining columns to a matrix using `as.matrix()` before running `prcomp()`.\
+You could use `order()` to find the top components.
+
+```{r q7_pca_returns}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q7_EXPLANATION
+Write your explanation here.
+```
+
+------------------------------------------------------------------------
+
+## Q8 : Explained variance using the elbow method
+
+**Tasks:**\
+(a) Extract the explained variance ratios from the principal components calculated in Q7.\
+(b) What percentage of variance is explained by the first principal component?\
+(c) Plot the first 20 explained variance ratios.\
+(d) Identify an elbow using the helper function **find_elbow()** and mark it on the plot.\
+(e) As well as explaining your code, explain what the elbow represents.\
+\
+**Hints**: The PCA object from Q7 contains standard deviations of each principal component in *your_pca_object*`$sdev`. The variance of each component is the square of these values. The explained variance ratio is each variance divided by the total variance.
+
+The explained variance ratios are stored as a numeric vector, so you can extract the first 20 values using standard indexing - for example, by referencing elements 1:20 of that vector.
+
+To plot the explained variance ratios, you could use `plot()` to create the graph, and then highlight the elbow using `abline()` or `points()` to mark the location returned by `find_elbow()`.
+
+```{r q8_explained_variance}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q8_EXPLANATION
+Explain your code here, and very briefly explain what the 'elbow' represents.
+```
+
+------------------------------------------------------------------------
+
+## Q9 : Cumulative variance
+
+**Tasks:**\
+(a) Calculate the cumulative variance ratios using `cumsum()` on the list of explained variance ratios from Q8.\
+(b) Plot all these cumulative variance ratios (x-axis = principal component, y-axis = cumulative variance ratio).\
+(c) Mark on your plot the principal component for which the cumulative variance ratio is greater than or equal to 95%.\
+\
+**Hints:** you could use `cumsum()` on your explained variance ratio vector to calculate the cumulative variance. This will return a numeric vector, where each value represents the total variance explained up to that principal component. To find where the cumulative variance first exceeds 95%, you might compare the cumulative vector with 0.95 and identify the first index where this condition holds true.
+
+To visualize the cumulative variance, consider `plot()` or `plot(cumulative_vector, type = "l")` to create the plot. To highlight the principal component where the cumulative variance exceeds 95%, you could add a point or vertical line using `points()` or `abline(v = ...)` to mark the location.
+
+```{r q9_cumulative_variance}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q9_EXPLANATION
+Explain your code here.
+```
+
+------------------------------------------------------------------------
+
+## Q10 : Standardised returns
+
+**Tasks:**\
+(a) **Standardise** your returns data frame from Q6 so that each ticker column has *zero mean* and *unit variance*. (Do not include the `Date` column.)\
+(b) Repeat Q7 for this new standardised returns matrix.\
+(c) Repeat Q8 for this standardised PCA.\
+(d) Repeat Q9 for this standardised PCA.\
+(e) In the Explanation box, **explain why standardising the returns before PCA can be useful** and how it affects the interpretation of the principal components.
+
+**Hints:** `scale()` may be useful here.\
+Standardising removes differences in volatility between tickers so that PCA focuses on their *correlation structure* rather than raw variance.
+
+```{r q10_standardised_returns}
+# YOUR CODE GOES HERE
+```
+
+**Explanation box (do not delete this section):**
+
+```{verbatim}
+# Q10_EXPLANATION
+Explain why standardising before PCA is useful, and how it changes the PCA results.
+```
+
+------------------------------------------------------------------------
+
+## Q11 : COMP529 Research Problem Question 
+
+**Task:**\
+Financial datasets often come from multiple providers, and the same company may appear under different names or identifiers (e.g. "Google", "Alphabet", "GOOG", "GOOGL").\
+This challenge - known as **entity alignment** - was introduced in Week 8 of the lectures and is an active research problem in Big Data.
+
+Write **250–300 words** explaining:
+
+1.  **What entity alignment is**, and why it is difficult in large, heterogeneous datasets.
+2.  **Why misaligned or duplicated entities can distort PCA-based market analysis**, especially when constructing price panels or computing covariance matrices.
+3.  **One recent peer-reviewed paper** that proposes a solution to the entity-alignment problem (e.g., using embeddings, graph methods, or LLM-based techniques).
+4.  A short description of **how improved entity alignment would lead to more reliable PCA results** in practical financial analytics.
+
+You only need **one** reference. Focus on clarity and explanation.\
+\
+**Hint:** If you are unsure where to start, try searching **Google Scholar** for terms like *entity alignment*, *entity matching*, *record linkage*, or *knowledge graph alignment*. Choose any one paper that explains a method (for example, using embeddings, graph neural networks, or transformer models). You do not need to understand every mathematical detail - aim to explain the main idea in your own words and why it helps match entities correctly in large datasets.
+
+**Explanation box:**
+
+```{verbatim}
+# Q11_EXPLANATION 
+Write your approx 250–300 word discussion here, including at least one reference.
+```

@@ -1,0 +1,304 @@
+---
+title: "Supervised Learning at Scale"
+author: "Dom Richards"
+date: "2025-10-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Prerequisites and Setup
+
+In this section, we'll be using Apache Arrow, a tool for very fast data interchange between R and Spark. It provides significant performance improvements for data exchange between R and Spark.
+
+To run the code with Arrow enabled (optional) you'll need to install as follows:
+
+- First install the Python package for arrow (this includes the C++ libraries needed by R): `pip install 'pyarrow==21.0.*'`
+- You'll also need to install the R package for arrow: `install.packages("arrow")`
+
+We'll now look at how to train classification algorithms (and more generally, any machine learning algorithm) in Spark via R.
+
+Spark's machine learning library is called **MLlib**. It provides the following tools:
+
+- ML algorithms for classification, regression and clustering
+- Featurization algorithms to construct features (design matrices) from raw data that can be used in ML algorithms
+- Pipelines for constructing, evaluating, and tuning ML algorithms
+- Persistence functions for saving and loading algorithms, models, and Pipelines
+- Utilities for linear algebra, statistics, data handling, etc.
+
+MLlib was originally built on RDDs, but now all new development is focused on dataframes. This new iteration of MLlib is sometimes referred to as **Spark ML** to distinguish it from the older RDD-based codebase.
+
+## Data Preparation
+
+We'll use the `flights` data from last week. Here's the first few rows of our prepared ML dataset:
+
+```{r, echo=FALSE}
+# Assuming flights_ml is already prepared in the environment
+# head(flights_ml)
+```
+
+### Visualizing Flight Delays
+
+Let's visualize the relationship between distance and departure delay, colored by late arrivals:
+
+```{r}
+library(ggplot2)
+
+ggplot(flights_ml, aes(x = distance, y = dep_delay, color = factor(late), shape = factor(late))) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c("0" = "orange", "1" = "black"), labels = c("On-time", "Late (>15 min)")) +
+  scale_shape_manual(values = c("0" = 17, "1" = 16), labels = c("On-time", "Late (>15 min)")) +
+  labs(
+    x = "Distance (miles)",
+    y = "Departure Delay (minutes)",
+    color = "Status",
+    shape = "Status"
+  ) +
+  theme_minimal()
+```
+
+# Fitting a Linear Support Vector Classifier
+
+We'll train a Linear Support Vector Classifier to classify flights as late or on-time using the formula interface:
+
+```{r}
+svc_model <- flights_ml %>%
+  ml_linear_svc(
+    late ~ distance + dep_delay,
+    max_iter = 10,
+    reg_param = 0.01
+  )
+```
+
+### Understanding the Linear SVC Classification
+
+The code above demonstrates binary classification using the formula interface:
+
+- `late ~ distance + dep_delay`: R formula syntax specifying target variable (left) and features (right).
+- `ml_linear_svc()` trains a Linear Support Vector Classifier to predict the binary `late` variable (0 = on-time, 1 = late).
+- `max_iter = 10` sets the maximum number of iterations for the optimization algorithm.
+- `reg_param = 0.01` controls regularization strength to prevent overfitting (smaller values = less regularization).
+- The Linear SVC finds a linear decision boundary (a straight line in 2D) that best separates late flights from on-time flights.
+
+### Linear SVC Decision Boundary Visualization
+
+Now let's visualize how the Linear SVC model classifies different regions of the feature space:
+
+```{r}
+# Assuming we generate grid data and predict to visualize
+# (Code omitted as it relies on interactive plotting generation in the original lecture)
+```
+
+# Model Return Types
+
+The return type of `ml_linear_svc()` depends on what you pass as the first argument.
+
+Above, we called it with a Spark DataFrame (`flights_ml`) as its first argument. This immediately fits the model and returns a fitted model:
+
+```{r}
+class(svc_model)
+```
+
+Instances of `ml_model` represent trained models in Spark ML. They have methods for making predictions and accessing model parameters. E.g., we used `ml_predict(svc_model, grid_spark)` to generate the above plot of predictions.
+
+We can alternatively call `ml_linear_svc()` on the Spark connection to get a different return type:
+
+```{r}
+svc_estimator <- ml_linear_svc(
+  sc,
+  label_col = "late",
+  features_col = "features",
+  max_iter = 10,
+  reg_param = 0.01
+)
+class(svc_estimator)
+```
+
+We can see that `svc_estimator` is an unfitted estimator. This can be added to a pipeline for later fitting.
+
+# Building Pipelines
+
+In real industrial settings, machine learning algorithms such as K-Means, DBSCAN, K Nearest Neighbors and SVMs are typically trained in a workflow that has the following stages:
+
+1. Load & clean data
+2. Extract / engineer features
+3. Train the model
+4. Evaluate the model
+5. Tune & repeat
+
+Spark ML represents this kind of workflow as a **Pipeline**.
+
+## Transformers and Estimators
+
+In Spark ML, pipelines are built by chaining together multiple Transformers and Estimators:
+
+- **Transformers** are algorithms that can transform one DataFrame into another DataFrame.
+    - Transformers provide a method called `ml_transform()` to produce new columns.
+    - Transformers include feature transformers and learned models.
+    - E.g., a trained ML model is a Transformer which transforms a DataFrame with features into a DataFrame with predictions.
+    - As we saw earlier, `ml_linear_svc()` returns an `ml_model` when called on a dataframe.
+
+- **Estimators** are algorithms that can be fit on a DataFrame to produce a Transformer.
+    - Estimators can be passed to a function called `ml_fit()`, which trains a model, returning a Transformer.
+    - An Estimator abstracts the concept of a learning algorithm or any algorithm that fits or trains on data.
+    - E.g., a learning algorithm is an Estimator which trains on a DataFrame and produces a model (which is a Transformer).
+    - As we saw earlier, `ml_linear_svc()` returns an Estimator when called on a spark connection.
+
+## Fitting an SVC Pipeline
+
+We can refit the Linear SVC model from before, but this time as a pipeline:
+
+```{r}
+svc_pipeline <- ml_pipeline(sc) %>%
+  ft_vector_assembler(
+    input_cols = c("distance", "dep_delay"),
+    output_col = "features"
+  ) %>%
+  ml_linear_svc(
+    features_col = "features",
+    label_col = "late",
+    max_iter = 10,
+    reg_param = 0.01
+  )
+
+class(svc_pipeline)
+```
+
+### Understanding Manual Feature Assembly
+
+This time, rather than using the formula interface, we manually assembled the features:
+
+- `ft_vector_assembler()` yields a transformer that creates a feature vector from specified input columns (`distance`, `dep_delay`).
+- `ml_linear_svc()` adds a Linear SVC estimator to the pipeline.
+
+This approach explicitly creates a pipeline with chained stages:
+
+- `ml_pipeline(sc)` creates an empty pipeline object attached to the Spark connection.
+- `ft_vector_assembler()` adds a transformer that combines multiple columns into a single feature vector column.
+    - `input_cols` specifies which columns to combine into the feature vector.
+    - `output_col = "features"` names the new column containing the assembled feature vector.
+- `ml_linear_svc()` adds an estimator using column name arguments instead of formula syntax:
+    - `features_col = "features"` points to the assembled feature vector.
+    - `label_col = "late"` specifies the target variable.
+
+Once the pipeline has been created, it can be fitted to the training data using `ml_fit()`.
+
+## Train/Test Split and Evaluation
+
+To get a better idea of model performance, we can split the data into training and test sets, fit the pipeline on the training set using `ml_fit()`, and evaluate on the test set:
+
+```{r}
+set.seed(42)
+parts <- flights_ml %>%
+  sdf_random_split(train = 0.8, test = 0.2, seed = 42)
+
+ml_train <- parts$train
+ml_test <- parts$test
+
+fitted_pipeline_model <- ml_fit(svc_pipeline, ml_train)
+```
+
+_(注：此处原幻灯片第 58 页展示了一个 Area Under ROC 的值为 0.8946612。)_
+
+Area Under ROC is a common metric for evaluating binary classifiers, with 1.0 being perfect and 0.5 being random guessing. 0.89 is generally very good.
+
+It's outside the scope of this lecture to cover evaluation metrics in detail (that's generic machine learning rather than big data) but more info can be found in either of the recommended books.
+
+As we've seen above, a Pipeline is specified as a sequence of stages, and each stage is either a Transformer or an Estimator. When `ml_fit()` is called on a Pipeline, these stages are run in order, and the input DataFrame is transformed as it passes through each stage.
+
+- For Transformer stages, the `transform()` method is called on the DataFrame.
+- For Estimator stages, the `ml_fit()` method is called to produce a Transformer (which becomes part of the `PipelineModel`, or fitted Pipeline), and that Transformer's `transform()` method is called on the DataFrame.
+
+# Pipeline Example: Cross Validation for Hyperparameter Tuning
+
+## Introduction to Cross Validation
+
+- Models often have **hyperparameters** that control learning (e.g., `reg_param` in SVC).
+- Choosing optimal hyperparameters is crucial for model performance.
+- **Model Tuning**: process of selecting best hyperparameters.
+- The most common tuning method is **cross-validation**.
+- In cross validation, we select a range of possible hyperparameter combinations, and evaluate model performance for each combination \(k\) times, each time using a slightly different training and test split.
+- The \(k\) splits are called **folds**.
+- Each time we train on \(k - 1\) folds and test on the held-out fold.
+- Finally, we average the performance across all \(k\) folds for each hyperparameter combination, and select the best one.
+
+### Steps for Cross Validation
+
+1. Split data into training and test sets (or folds).
+2. For each parameter setting:
+    - Fit the model with `ml_fit()`.
+    - Transform test data with `ml_transform()`.
+    - Evaluate with `ml_evaluate()`.
+3. Select the model with the best performance.
+
+**Practical tips:**
+
+- Cache training data for speed.
+- Keep parameter grids focused (avoid Cartesian blowup).
+- Use the `parallelism` argument in `ml_cross_validation()`.
+
+## Hyperparameter Tuning with K-Fold Cross-Validation
+
+Let's use cross-validation to find the optimal `reg_param` value for our SVC model:
+
+```{r}
+param_grid <- list(
+  linear_svc = list(
+    reg_param = c(0.001, 0.01, 0.1, 1.0)
+  )
+)
+
+cv_tuner <- ml_cross_validation(
+  sc,
+  estimator = svc_pipeline,
+  estimator_param_maps = param_grid,
+  evaluator = ml_binary_classification_evaluator(
+    sc,
+    label_col = "late",
+    metric_name = "areaUnderROC"
+  ),
+  num_folds = 5,
+  parallelism = 12
+)
+
+class(cv_tuner)
+```
+
+### Understanding Cross-Validation for Hyperparameter Tuning
+
+This code demonstrates k-fold cross-validation for tuning the `reg_param` hyperparameter:
+
+- `param_grid` defines the hyperparameter search space - here testing 4 different `reg_param` values.
+- `ml_cross_validation()` creates a CV object that will:
+    - Split data into 5 folds (`num_folds = 5`).
+    - For each `reg_param` value, train on 4 folds and validate on the 5th.
+    - Repeat for all fold combinations and average the results.
+- `evaluator` specifies AUC as the metric to optimize (higher is better).
+- `ml_validation_metrics()` retrieves performance for each hyperparameter combination.
+- Result shows the best `reg_param` value and corresponding AUC score.
+
+## Saving and Loading Models
+
+We can save and load MLlib objects (Pipelines, Models, etc.) using `ml_save()` and `ml_load()`:
+
+```{r}
+# Ensure models/ exists
+dir.create("models", showWarnings = FALSE, recursive = TRUE)
+
+# Assuming cv_model is the fitted pipeline resulting from the CV tuning
+ml_save(cv_model, "models/late_classifier_svm_cv", overwrite = TRUE)
+
+loaded <- ml_load(sc, "models/late_classifier_svm_cv")
+loaded_pred <- ml_transform(loaded, ml_test)
+
+loaded_auc <- ml_binary_classification_evaluator(
+  loaded_pred,
+  label_col = "late",
+  raw_prediction_col = "rawPrediction",
+  metric_name = "areaUnderROC"
+)
+
+round(loaded_auc, 3)
+```

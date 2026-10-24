@@ -1,0 +1,206 @@
+---
+title: "Big Data Analytics Week 3 Lab: Introduction to Sparklyr"
+author: "Dom Richards"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    toc_float: true
+    theme: default
+    highlight: default
+header-includes:
+  - \DeclareUnicodeCharacter{03B3}{$\gamma$}
+  - \DeclareUnicodeCharacter{03B4}{$\delta$}
+  - \DeclareUnicodeCharacter{03C0}{$\pi$}
+  - \DeclareUnicodeCharacter{03C1}{$\rho$}
+  - \DeclareUnicodeCharacter{03C3}{$\sigma$}
+  - \DeclareUnicodeCharacter{03C4}{$\tau$}
+  - \DeclareUnicodeCharacter{222A}{$\cup$}
+  - \DeclareUnicodeCharacter{2212}{$-$}
+  - \DeclareUnicodeCharacter{2A1D}{$\bowtie$}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, eval = FALSE)
+```
+
+# Setup and Data Loading
+
+## Installing and Loading Required Packages
+
+```{r load-packages, eval=TRUE}
+# --- Install and load packages safely ---
+packages <- c("sparklyr", "dplyr", "nycflights13")
+
+# Install only missing packages
+installed <- rownames(installed.packages())
+for (pkg in packages) {
+  if (!(pkg %in% installed)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+# --- Spark setup ---
+options(timeout = 1200)  # allow long downloads
+
+spark_version <- "3.5.1"
+spark_dir <- file.path(sparklyr::spark_install_dir(), paste0("spark-", spark_version, "-bin-hadoop3"))
+spark_tar <- file.path(tempdir(), paste0("spark-", spark_version, "-bin-hadoop3.tgz"))
+spark_url <- paste0(
+  "https://www.mirrorservice.org/sites/ftp.apache.org/spark/spark-",
+  spark_version, "/spark-", spark_version, "-bin-hadoop3.tgz"
+)
+
+# Download Spark only if it’s not already installed
+if (!dir.exists(spark_dir)) {
+  if (!file.exists(spark_tar)) {
+    message("Downloading Spark ", spark_version, "...")
+    download.file(spark_url, destfile = spark_tar, mode = "wb", method = "libcurl", quiet = FALSE)
+  }
+  message("Installing Spark ", spark_version, " from tarball...")
+  sparklyr::spark_install_tar(spark_tar)
+} else {
+  message("Spark ", spark_version, " is already installed at: ", spark_dir)
+}
+
+```
+
+## Connecting to Spark
+
+```{r connect-spark, eval=TRUE}
+# Connect to local Spark instance
+cfg <- spark_config()
+# Connect (Hive disabled for stability)
+cfg$sparklyr.connect.enableHive <- FALSE
+sc <- spark_connect(master = "local[*]", version = "3.5.1", config = cfg)
+```
+
+## Loading the nycflights13 Dataset
+
+The **nycflights13** dataset contains information about all 336,776 flights that departed from New York City airports (JFK, LGA, EWR) in 2013.
+
+```{r load-data, eval=TRUE}
+# Copy data to Spark
+flights_tbl <- copy_to(sc, nycflights13::flights, "flights", overwrite = TRUE)
+airlines_tbl <- copy_to(sc, nycflights13::airlines, "airlines", overwrite = TRUE)
+airports_tbl <- copy_to(sc, nycflights13::airports, "airports", overwrite = TRUE)
+planes_tbl <- copy_to(sc, nycflights13::planes, "planes", overwrite = TRUE)
+weather_tbl <- copy_to(sc, nycflights13::weather, "weather", overwrite = TRUE)
+
+# Check the data
+flights_tbl
+```
+
+**Exercise 1:** How many rows are in the flights table? Use `count()` and `collect()` to find out.
+
+```{r ex1-solution, eval=FALSE}
+# Your solution here
+```
+
+# Selection: filter() {σ}
+
+The `filter()` verb selects rows that satisfy given conditions. It corresponds to the relational algebra selection operator σ.
+
+**Exercise 2:** Filter the flights to find all United Airlines (carrier code "UA") flights in December that were delayed by more than 2 hours (120 minutes). Print the first 10 rows.
+
+```{r ex2-solution, eval=FALSE}
+# Your solution here
+```
+
+# Projection: select() {π}
+
+The `select()` verb chooses specific columns from a table. It corresponds to the relational algebra projection operator π.
+
+**Exercise 4:** Select only the time-related columns (year, month, day, hour, minute) and the distance column. Show the first 5 rows.
+
+```{r ex4-solution, eval=FALSE}
+# Your solution here
+```
+
+# Combining filter() and select()
+
+You can chain multiple dplyr operations using the pipe operator `%>%`:
+
+```{r filter-select-combined, eval=FALSE}
+# Find delayed flights from Newark, showing only key columns
+delayed_ewr <- flights_tbl %>%
+    filter(origin == "EWR", dep_delay > 60) %>%
+    select(month, day, carrier, flight, dep_delay, arr_delay) %>%
+    arrange(desc(dep_delay))
+
+delayed_ewr %>%
+    head(10) %>%
+    collect()
+```
+
+**Exercise 5:** Find all flights to Los Angeles (LAX) in summer (June, July, August) and show only the carrier, flight number, departure delay, and arrival delay. Order by departure delay (descending).
+
+```{r ex5-solution, eval=FALSE}
+# Your solution here
+```
+
+# Aggregation: group_by() and summarise() {γ}
+
+The `group_by()` and `summarise()` verbs compute aggregate statistics for groups of rows.
+
+## Basic Aggregation
+
+```{r aggregate-basic, eval=FALSE}
+# Average delays by carrier
+carrier_delays <- flights_tbl %>%
+    group_by(carrier) %>%
+    summarise(
+        count = count(),
+        avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+        avg_arr_delay = mean(arr_delay, na.rm = TRUE),
+        max_dep_delay = max(dep_delay, na.rm = TRUE)
+    )
+
+carrier_delays %>%
+    arrange(desc(avg_dep_delay)) %>%
+    collect()
+```
+
+**Exercise 6:** Calculate the total number of flights, average departure delay, and average air time for each destination airport. Sort by total number of flights (descending) and show the top 10 destinations.
+
+```{r ex6-solution, eval=FALSE}
+# Your solution here
+```
+
+**Exercise 7:** Which month has the worst average arrival delays? Calculate average arrival delay by month.
+
+```{r ex7-solution, eval=FALSE}
+# Your solution here
+```
+
+# Joins: Combining Multiple Tables {⨝}
+
+Joins combine data from multiple tables based on common columns.
+
+## Inner Join
+
+```{r inner-join, eval=FALSE}
+# Add airline names to flight data
+flights_with_airlines <- flights_tbl %>%
+    inner_join(airlines_tbl, by = "carrier") %>%
+    select(year, month, day, carrier, name, flight, origin, dest)
+
+flights_with_airlines %>%
+    head() %>%
+    collect()
+```
+
+**Exercise 8:** Create a query that joins flights with airlines and shows:
+
+-   The airline name
+-   The number of flights for that airline
+-   The average departure delay
+
+Order by number of flights (descending)
+
+```{r ex8-solution, eval=FALSE}
+# Your solution here
+```

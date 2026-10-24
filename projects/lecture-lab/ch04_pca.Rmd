@@ -1,0 +1,193 @@
+---
+title: "Principal Component Analysis (PCA)"
+author: "Dom Richards"
+date: "2025-10-13"
+output:
+    pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Principal Component Analysis (PCA)
+
+Principal Component Analysis (PCA) is a reparameterisation (or change of basis) of data from its original coordinate system (the original variables) to a new coordinate system defined by orthogonal directions of maximal variance (we'll unpack this shortly).
+
+- Start with data in \(\mathbb{R}^p\) (say, \(p\) features).
+- PCA finds new axes — the principal components — such that:
+    1. Each successive axis captures as much of the remaining variance as possible.
+    2. All axes are orthogonal (uncorrelated).
+- Less informative components (those explaining little variance) can be dropped, keeping only the first few — this is the dimensionality reduction step.
+
+Consider the following example:
+
+```{r, echo=FALSE, out.width="80%"}
+knitr::include_graphics("figures/pca_geometric_view.png")
+```
+
+_(注：此处为原幻灯片第 32 页的配图，原图为几何视角的 PCA：PC1 \((c_1)\) 捕捉最大方差，PC2 \((c_2)\) 捕捉剩余方差；投影 \(z_1, z_2\) 展示了每个数据点在主成分上的投影——也称为因子载荷。)_
+
+Above we have 200 samples, each with 2 variables.
+
+- PCA first finds the line along which sample projections are most spread out (i.e. have the greatest variance).
+- This line is represented by a 2D unit vector, which is the first principal component.
+- The projection of a sample onto this line is called its **factor loading**.
+- The product of a sample's factor loading and the first principal component is an approximation of the point.
+- The second principal component is the unit vector, orthogonal to the first, along which sample projections are most spread out (i.e. have the greatest variance).
+- The product of the second principal component and factor loading, then provides an offset from the first to reach point 1.
+
+Let \(X \in \mathbb{R}^{n \times p}\) be the design matrix of our data: each of the \(n\) rows is an observation and each of the \(p\) columns is a variable (feature).
+For the plot above we have \(p = 2\) (axes \(x_1, x_2\)) and \(n = 200\) samples.
+We work with the column-centred matrix
+
+\[
+\tilde{X} = X - \mathbf{1}\mu^{\top}, \quad \text{where} \quad \mu = \frac{1}{n} X^{\top} \mathbf{1}
+\]
+
+so every column has mean zero. (Here \(\mathbf{1}\) is the \(n\)-vector of ones.)
+
+## PCA in Linear Algebra Form
+
+PCA finds orthonormal directions that maximise variance of the projected data. Algebraically, compute the sample covariance as per the week 3 tutorial sheet:
+
+\[
+S = \frac{1}{n - 1}\tilde{X}^{\top}\tilde{X}\in \mathbb{R}^{p\times p},
+\]
+
+and take its eigendecomposition as per the week 4 tutorial sheet:
+
+\[
+S = V\Lambda V^{\top},
+\]
+
+where \(V = [\mathbf{c}_1 \mathbf{c}_2 \dots \mathbf{c}_p]\) has orthonormal columns (eigenvectors) and \(\Lambda = \mathrm{diag}(\lambda_1\geq \lambda_2\geq \dots \geq \lambda_p)\) are the eigenvalues.
+
+In the figure above, the black solid line is the first principal direction \(\mathbf{c}_1\) : the unit vector along which the projected variance of \(\tilde{X}\) is maximised.
+
+- The dotted line orthogonal to it is \(\mathbf{c}_2\) , the second direction capturing the largest remaining variance subject to orthogonality: \(\mathbf{c}_1^\top \mathbf{c}_2 = 0\) .
+  Both are unit length: \(\| \mathbf{c}_j\| _2 = 1\) .
+
+Projecting the centred data onto these axes gives the scores:
+
+\[
+Z = \tilde{X}V
+\]
+
+The \(j\)-th score column \(\mathbf{z}_j = \tilde{X}\mathbf{c}_j\) is the data projected onto axis \(\mathbf{c}*j\).
+In the small panels on the right of the figure above, \(z*{1}\) and \(z_{2}\) show how the point cloud flattens when projected: \(\mathrm{Var}(z_1) = \lambda_1\) is largest; \(\mathrm{Var}(z_2) = \lambda_2\) is smaller.
+
+Eigenvalues tell us how much variance each principal component captures:
+
+- When we project our data onto a principal component \(\mathbf{c}_j\), we get scores \(\mathbf{z}_j = \tilde{X}\mathbf{c}_j\).
+- The variance of these projected scores is exactly the eigenvalue: \(\text{Var}(\mathbf{z}_j) = \lambda_j\).
+- This happens because:
+    - Principal components are eigenvectors of the covariance matrix \(S\).
+    - By definition: \(S\mathbf{c}_j = \lambda_j\mathbf{c}_j\).
+    - The variance of projections onto \(\mathbf{c}_j\) is \(\mathbf{c}_j^T S\mathbf{c}_j = \mathbf{c}_j^T (\lambda_j\mathbf{c}_j) = \lambda_j\).
+- Therefore, larger eigenvalues = more variance captured = more important components.
+
+### Variance explained and reconstruction
+
+The fraction of variance explained by the first \(k\) components is
+
+\[
+\frac{\lambda_1 + \dots + \lambda_k}{\lambda_1 + \dots + \lambda_p}.
+\]
+
+If we keep only the first \(k\) components, the rank-\(k\) reconstruction in the original variable space is
+
+\[
+\hat{X}^{(k)} = Z_{(\cdot ,1:k)}V_{(\cdot ,1:k)}^{\top} + \mathbf{1}\mu^{\top} = \tilde{X} V_{(\cdot ,1:k)}V_{(\cdot ,1:k)}^{\top} + \mathbf{1}\mu^{\top} \quad (1)
+\]
+
+# PCA Example in Sparklyr
+
+We'll now look at an example of PCA in sparklyr using the `iris` dataset:
+
+- It's a classic dataset for classification problems.
+- Three classes correspond to sub-species of the iris flower.
+- Measurements capture key dimensions of petals and sepals.
+- Demonstrates both separable and overlapping class structure.
+
+We'll use all four numeric features (excluding Species labels):
+
+```{r}
+pca_model <- iris_tbl %>%
+  select(-Species) %>%
+  ml_pca(k = 4) # Extract all 4 components
+
+pca_model
+```
+
+## Explained variance
+
+We can examine the variance explained by each component (`kable` is just for pretty printing):
+
+```{r}
+data.frame(
+  Component = paste0("PC", 1:4),
+  Explained_Variance = pca_model$explained_variance
+) %>%
+  knitr::kable(digits = 3)
+```
+
+We see that PC1 captures \(\sim 92\%\) of the variance, meaning most information is in the first dimension.
+
+The rotation matrix shows how original features contribute to each principal component:
+
+```{r}
+pca_model$pc %>%
+  knitr::kable(digits = 3)
+```
+
+## Transform Data to PC space
+
+```{r}
+# Collect original data and compute projections manually
+iris_collected <- iris_tbl %>% collect()
+
+# Extract the numeric features as a matrix
+features_matrix <- as.matrix(iris_collected[, c("Sepal_Length", "Sepal_Width", "Petal_Length", "Petal_Width")])
+
+# Project onto principal components using the rotation matrix
+# Note: using matrix multiplication (%*%) as intended in the original slide
+pc_scores <- features_matrix %*% pca_model$pc
+
+# Combine with Species labels
+iris_pca <- data.frame(
+  Species = iris_collected$Species,
+  PC1 = pc_scores[, 1],
+  PC2 = pc_scores[, 2],
+  PC3 = pc_scores[, 3],
+  PC4 = pc_scores[, 4]
+)
+```
+
+```{r}
+iris_pca %>%
+  head() %>%
+  knitr::kable(digits = 3)
+```
+
+## Visualise in PC space
+
+```{r}
+ggplot(iris_pca, aes(PC1, PC2)) +
+  geom_point(aes(color = Species), size = 2, alpha = 0.7) +
+  labs(
+    title = "Iris Dataset in Principal Component Space",
+    subtitle = "PC1 captures 92% of variance, PC2 captures 5%",
+    x = "First Principal Component (PC1)",
+    y = "Second Principal Component (PC2)"
+  ) +
+  theme(
+    text = element_text(size = 8),
+    plot.title = element_text(size = 10),
+    plot.subtitle = element_text(size = 8),
+    axis.title = element_text(size = 8),
+    axis.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 7)
+  )
+```
